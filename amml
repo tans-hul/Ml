@@ -1,0 +1,82 @@
+import dgl
+import torch
+import torch.nn as nn
+import torch.optim as optim
+
+# Create a DGL graph
+def create_dgl_graph(user_prod, users, products):
+    user_ids = users['user_id'].unique()
+    prod_ids = products['prod_id'].unique()
+    
+    # Create a mapping from user/prod id to index
+    user_mapping = {id: i for i, id in enumerate(user_ids)}
+    prod_mapping = {id: i + len(user_ids) for i, id in enumerate(prod_ids)}
+
+    # Create a bipartite graph
+    edges = [(user_mapping[row['user_id']], prod_mapping[row['prod_id']])
+             for _, row in user_prod.iterrows()]
+
+    src, dst = zip(*edges)
+    g = dgl.graph((src, dst), num_nodes=len(user_ids) + len(prod_ids))
+
+    # Add node features
+    user_features = torch.eye(len(user_ids))
+    prod_features = torch.eye(len(prod_ids))
+    g.ndata['feat'] = torch.cat([user_features, prod_features], dim=0)
+
+    # Add edge features
+    buys = torch.tensor(user_prod['buys'].values, dtype=torch.float32)
+    g.edata['label'] = buys
+
+    return g, len(user_ids), len(prod_ids)
+
+# Assuming you have loaded user_prod, users, and products DataFrames
+g, num_users, num_prods = create_dgl_graph(user_prod, users, products)
+
+
+import dgl.nn.pytorch as dglnn
+
+class RecommendationG# Create the DGL graph
+g, num_users, num_prods = create_dgl_graph(user_prod, users, products)AT(nn.Module):
+    def __init__(self, in_feats, h_feats, out_feats, num_heads):
+        super(RecommendationGAT, self).__init__()
+        self.layer1 = dglnn.GATConv(in_feats, h_feats, num_heads, feat_drop=0.6, attn_drop=0.6, activation=F.relu)
+        self.layer2 = dglnn.GATConv(h_feats * num_heads, out_feats, 1, feat_drop=0.6, attn_drop=0.6)
+
+    def forward(self, g, in_feat):
+        h = self.layer1(g, in_feat).flatten(1)
+        h = self.layer2(g, h).mean(1)
+        with g.local_scope():
+            g.ndata['h'] = h
+            g.apply_edges(dgl.function.u_dot_v('h', 'h', 'score'))
+            return g.edata['score']
+
+# Create the DGL graph
+g, num_users, num_prods = create_dgl_graph(user_prod, users, products)
+
+
+# Instantiate the model
+in_feats = g.ndata['feat'].shape[1]
+h_feats = 16
+out_feats = 8
+num_heads = 8
+
+model = RecommendationGAT(in_feats, h_feats, out_feats, num_heads)
+criterion = nn.BCEWithLogitsLoss()
+optimizer = optim.Adam(model.parameters(), lr=0.01)
+
+# Training loop
+def train():
+    model.train()
+    optimizer.zero_grad()
+    logits = model(g, g.ndata['feat'])
+    labels = g.edata['label'].unsqueeze(1)
+    loss = criterion(logits, labels)
+    loss.backward()
+    optimizer.step()
+    return loss.item()
+
+# Training the model
+for epoch in range(10):
+    loss = train()
+    print(f'Epoch {epoch+1}, Loss: {loss}')
